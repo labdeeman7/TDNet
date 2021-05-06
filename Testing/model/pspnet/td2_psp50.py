@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timeit
-from .resnet import resnet18,resnet34,resnet50
+from .resnet import resnet18, resnet34, resnet50
 import random
 import pdb
 import os
 from .transformer import Encoding, Attention
+
 
 class BatchNorm2d(nn.BatchNorm2d):
     '''(conv => BN => ReLU) * 2'''
@@ -16,7 +17,7 @@ class BatchNorm2d(nn.BatchNorm2d):
         if activation == 'leaky_relu':
             self.activation = nn.LeakyReLU()
         elif activation == 'none':
-            self.activation = lambda x:x
+            self.activation = lambda x: x
         else:
             raise Exception("Accepted activation: ['leaky_relu']")
 
@@ -26,9 +27,11 @@ class BatchNorm2d(nn.BatchNorm2d):
 
 up_kwargs = {'mode': 'bilinear', 'align_corners': True}
 
+
 class td2_psp50(nn.Module):
     """
     """
+
     def __init__(self,
                  nclass=21,
                  norm_layer=BatchNorm2d,
@@ -37,7 +40,7 @@ class td2_psp50(nn.Module):
                  aux=True,
                  multi_grid=True,
                  path_num=None,
-                 model_path = None
+                 model_path=None
                  ):
         super(td2_psp50, self).__init__()
 
@@ -49,8 +52,8 @@ class td2_psp50(nn.Module):
 
         # copying modules from pretrained models
         self.backbone = backbone
-        assert(backbone == 'resnet50' or backbone == 'resnet34' or backbone == 'resnet18')
-        assert(path_num == 2)
+        assert (backbone == 'resnet50' or backbone == 'resnet34' or backbone == 'resnet18')
+        assert (path_num == 2)
 
         if backbone == 'resnet18':
             ResNet_ = resnet18
@@ -68,80 +71,75 @@ class td2_psp50(nn.Module):
             raise RuntimeError("Four branch model only support ResNet18 amd ResNet34")
 
         self.pretrained1 = ResNet_(dilated=dilated, multi_grid=multi_grid,
-                                           deep_base=deep_base, norm_layer=norm_layer)
+                                   deep_base=deep_base, norm_layer=norm_layer)
         self.pretrained2 = ResNet_(dilated=dilated, multi_grid=multi_grid,
-                                           deep_base=deep_base, norm_layer=norm_layer)
+                                   deep_base=deep_base, norm_layer=norm_layer)
         # bilinear upsample options
 
-        self.psp1 =  PyramidPooling(512*self.expansion, norm_layer, self._up_kwargs, path_num=self.path_num, pid=0)
-        self.psp2 =  PyramidPooling(512*self.expansion, norm_layer, self._up_kwargs, path_num=self.path_num, pid=1)
+        self.psp1 = PyramidPooling(512 * self.expansion, norm_layer, self._up_kwargs, path_num=self.path_num, pid=0)
+        self.psp2 = PyramidPooling(512 * self.expansion, norm_layer, self._up_kwargs, path_num=self.path_num, pid=1)
 
-        self.enc1 = Encoding(512*self.expansion,64,512*self.expansion//4,norm_layer)
-        self.enc2 = Encoding(512*self.expansion,64,512*self.expansion//4,norm_layer)
-        self.atn1 = Attention(512*self.expansion//4,64,norm_layer)
-        self.atn2 = Attention(512*self.expansion//4,64,norm_layer)
- 
+        self.enc1 = Encoding(512 * self.expansion, 64, 512 * self.expansion // 4, norm_layer)
+        self.enc2 = Encoding(512 * self.expansion, 64, 512 * self.expansion // 4, norm_layer)
+        self.atn1 = Attention(512 * self.expansion // 4, 64, norm_layer)
+        self.atn2 = Attention(512 * self.expansion // 4, 64, norm_layer)
 
-        self.layer_norm1 = Layer_Norm([97,193])
-        self.layer_norm2 = Layer_Norm([97,193])
+        self.layer_norm1 = Layer_Norm([97, 193])
+        self.layer_norm2 = Layer_Norm([97, 193])
 
-        self.head1 = FCNHead(512*self.expansion//4, nclass, norm_layer, chn_down=2)
-        self.head2 = FCNHead(512*self.expansion//4, nclass, norm_layer, chn_down=2)
-            
+        self.head1 = FCNHead(512 * self.expansion // 4, nclass, norm_layer, chn_down=2)
+        self.head2 = FCNHead(512 * self.expansion // 4, nclass, norm_layer, chn_down=2)
+
         self.pretrained_mp_load()
 
         self.Q_queue = []
         self.V_queue = []
         self.K_queue = []
 
-
-    def buffer_contral(self,q,k,v):
-        assert(len(self.Q_queue)==len(self.V_queue))
-        assert(len(self.Q_queue)==len(self.K_queue))
+    def buffer_contral(self, q, k, v):
+        assert (len(self.Q_queue) == len(self.V_queue))
+        assert (len(self.Q_queue) == len(self.K_queue))
 
         self.Q_queue.append(q)
         self.V_queue.append(v)
         self.K_queue.append(k)
-        
-        if len(self.Q_queue)>1:
+
+        if len(self.Q_queue) > 1:
             self.Q_queue.pop(0)
             self.V_queue.pop(0)
             self.K_queue.pop(0)
-                    
 
     def forward_path1(self, img):
         z1 = self.psp1(self.pretrained1(img))
 
-        q_cur,v_cur = self.enc1(z1, pre=False) 
+        q_cur, v_cur = self.enc1(z1, pre=False)
 
-        if len(self.Q_queue)<1: 
+        if len(self.Q_queue) < 1:
             output = self.head1(self.layer_norm1(v_cur))
         else:
             v_1_ = self.atn1(self.K_queue[0], self.V_queue[0], q_cur, fea_size=z1.size())
-             
+
             output = self.head1(self.layer_norm1(v_1_ + v_cur))
 
-        q_cur,k_cur,v_cur = self.enc1(z1, pre=True) 
-        self.buffer_contral(q_cur,k_cur,v_cur)
+        q_cur, k_cur, v_cur = self.enc1(z1, pre=True)
+        self.buffer_contral(q_cur, k_cur, v_cur)
         return output
-
 
     def forward_path2(self, img):
         z2 = self.psp2(self.pretrained2(img))
 
-        q_cur,v_cur = self.enc2(z2, pre=False) 
+        q_cur, v_cur = self.enc2(z2, pre=False)
 
-        if len(self.Q_queue)<1: 
+        if len(self.Q_queue) < 1:
             output = self.head2(self.layer_norm2(v_cur))
-        else:            
+        else:
             v_1_ = self.atn2(self.K_queue[0], self.V_queue[0], q_cur, fea_size=z2.size())
- 
+
             output = self.head2(self.layer_norm2(v_1_ + v_cur))
 
-        q_cur,k_cur,v_cur = self.enc2(z2, pre=True) 
-        self.buffer_contral(q_cur,k_cur,v_cur)
+        q_cur, k_cur, v_cur = self.enc2(z2, pre=True)
+        self.buffer_contral(q_cur, k_cur, v_cur)
         return output
-
 
     def forward(self, img, pos_id=0):
         _, _, h, w = img.size()
@@ -149,17 +147,16 @@ class td2_psp50(nn.Module):
             output = self.forward_path1(img)
         elif pos_id == 1:
             output = self.forward_path2(img)
-            
+
         output = F.interpolate(output, (h, w), **self._up_kwargs)
 
         return output
-        
-        
+
     def pretrained_mp_load(self):
         if self.psp_path is not None:
             if os.path.isfile(self.psp_path):
                 print("Loading pretrained model from '{}'".format(self.psp_path))
-                model_state = torch.load(self.psp_path)
+                model_state = torch.load(self.psp_path, map_location='cpu')
                 self.load_state_dict(model_state, strict=True)
 
             else:
@@ -201,11 +198,11 @@ class PyramidPooling(nn.Module):
         feat3 = F.interpolate(self.conv3(self.pool3(x)), (h, w), **self._up_kwargs)
         feat4 = F.interpolate(self.conv4(self.pool4(x)), (h, w), **self._up_kwargs)
 
-        x = x[:, self.pid*c//self.path_num:(self.pid+1)*c//self.path_num]
-        feat1 = feat1[:, self.pid*c//(self.path_num*4):(self.pid+1)*c//(self.path_num*4)]
-        feat2 = feat2[:, self.pid*c//(self.path_num*4):(self.pid+1)*c//(self.path_num*4)]
-        feat3 = feat3[:, self.pid*c//(self.path_num*4):(self.pid+1)*c//(self.path_num*4)]
-        feat4 = feat4[:, self.pid*c//(self.path_num*4):(self.pid+1)*c//(self.path_num*4)]
+        x = x[:, self.pid * c // self.path_num:(self.pid + 1) * c // self.path_num]
+        feat1 = feat1[:, self.pid * c // (self.path_num * 4):(self.pid + 1) * c // (self.path_num * 4)]
+        feat2 = feat2[:, self.pid * c // (self.path_num * 4):(self.pid + 1) * c // (self.path_num * 4)]
+        feat3 = feat3[:, self.pid * c // (self.path_num * 4):(self.pid + 1) * c // (self.path_num * 4)]
+        feat4 = feat4[:, self.pid * c // (self.path_num * 4):(self.pid + 1) * c // (self.path_num * 4)]
 
         return torch.cat((x, feat1, feat2, feat3, feat4), 1)
 
@@ -226,7 +223,6 @@ class FCNHead(nn.Module):
 
     def forward(self, x):
         return self.conv5(x)
-
 
 
 class Layer_Norm(nn.Module):
