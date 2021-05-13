@@ -22,19 +22,19 @@ def test(args):
 
     if args.model == 'td4-psp18':
         path_num = 4
-        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(769, 1537))
+        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(1024, 2048))
         vid_seq.load_frames()
         model = td4_psp18.td4_psp18(nclass=19, path_num=path_num, model_path=args._td4_psp18_path)
 
     elif args.model == 'td2-psp50':
         path_num = 2
-        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(769, 1537))
+        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(1024, 2048))
         vid_seq.load_frames()
         model = td2_psp50.td2_psp50(nclass=19, path_num=path_num, model_path=args._td2_psp50_path)
 
     elif args.model == 'psp101':
         path_num = 1
-        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(769, 1537))
+        vid_seq = cityscapesLoader(img_path=args.img_path, in_size=(1024, 2048))
         vid_seq.load_frames()
         model = pspnet.pspnet(nclass=19, model_path=args._psp101_path)
 
