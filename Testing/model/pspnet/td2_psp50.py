@@ -148,7 +148,7 @@ class td2_psp50(nn.Module):
         elif pos_id == 1:
             output = self.forward_path2(img)
 
-        output = F.interpolate(output, (h, w), **self._up_kwargs)
+        output = F.interpolate(output, (1024, 2048), **self._up_kwargs)
 
         return output
 
